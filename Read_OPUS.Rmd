@@ -1,0 +1,328 @@
+---
+title: "Converting_OPUS"
+author: "Andrew Sila"
+date: "7/30/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+use_python("/usr/local/bin/python3")
+py_config()
+```
+
+## Convert ZnSe OPUS files
+The first step is to convert all the OPUS binary files into a format compatible with other programs like microsoft Excel, R, Python, etc.  
+After conversion a data table is produced which contains spectrum scanning details and the actual intensties. A copy of the table will be saved as csv/feather into a path provided.   
+
+A visual check of the converted spectra is produced in form of spectral signatures and a PCA scores plot using preprocessed spectrum with Savitzky and Golay filter method to check for spectral clustering and screen for outliers (samples lying far from the rest or with spectrum signature shapes different from the rest).      
+
+```{python, echo = FALSE, output= FALSE}
+import pandas as pd
+import opusFC
+
+import time
+start_time = time.time()
+import os
+import opusFC
+import numpy
+import pandas as pd
+#from ggplot import *
+import csv
+import glob
+#import feather
+import datetime
+import scipy as sp
+from scipy import interpolate
+import numpy as np
+
+# Change current working directory to where OPUS files are stored in your computer
+
+#user_input = input("Enter the path of your file: ")
+
+#userfile = "/Raw_spectra.feather"
+
+#os.chdir(user_input)
+
+os.chdir('/users/andrewsila/Downloads/Alpha_znse')
+# Check currect working directory
+cwd = os.getcwd()
+
+file_list = glob.glob(cwd + "/*.[0-9]")
+
+# print(file_list)
+
+# Loop through files in file_list
+
+# f = 'BEP.0'
+
+SNM = []
+INS = []
+DAT = []
+TIM = []
+EXP = []
+DUR = []
+CNM = []
+RES = []
+ZFF = []
+NPT = []
+LWN = []
+LXV = []
+FXV = []
+minY = []
+maxY = []
+
+
+
+# loop of all files
+
+count = 0
+
+for f in file_list:
+    try:
+
+        dbs = opusFC.listContents(f)
+
+        for pos, tupl in enumerate(dbs):
+
+            if tupl[0] == 'AB':
+                count += 1
+                #print(count)
+                #print(pos)
+
+                data = opusFC.getOpusData(f, dbs[pos])
+                #print(data.parameters)
+
+                SNM.append(data.parameters['SNM'])
+                INS.append(data.parameters['INS'])
+                DAT.append(data.parameters['DAT'])
+                TIM.append(data.parameters['TIM'])
+                DUR.append(data.parameters['DUR'])
+                CNM.append(data.parameters['CNM'])
+                RES.append(data.parameters['RES'])
+                ZFF.append(data.parameters['ZFF'])
+                NPT.append(data.parameters['NPT'])
+                LWN.append(data.parameters['LWN'])
+                FXV.append(data.parameters['FXV'])
+                LXV.append(data.parameters['LXV'])
+                minY.append(data.minY)
+                maxY.append(data.maxY)
+
+                continue
+
+    except ValueError:
+        print('Doesnt have AB Block', f)
+        print('This is non opus', f)
+        continue
+
+varnames = 'SNM', 'Instrument', 'Scan_date', "Time", "Duration", "Operator", "Resolution", "Zero_filling_Factor", "Number_points", "Laser_Wavenumber", "Wavenumber_one", "Wavenumber_last", "Min_absorbance", "Max_Absorbance"
+
+#DAT = datetime.datetime.strptime(DAT, "%Y-%m-%d")
+
+#DAT = datetime.datetime.strftime(DAT, "%Y-%m-%d")
+
+metadata1 = numpy.vstack((SNM,INS, DAT, TIM, DUR, CNM, RES, ZFF, NPT, LWN, FXV, LXV, minY, maxY)).T
+
+metadata = pd.DataFrame(metadata1, columns=varnames)
+
+################################DROP TIM#################################################
+
+met = (metadata['Time'])  # pick time
+#print met
+
+df = pd.DataFrame(met.str.split("[)(]").tolist())  # remove parenthesis from time column values
+#print df
+
+renam = df.rename( columns={0: "Time",1: "Zone", 2:"Empty"})
+#print renam
+
+dropEmpty = renam.drop(['Empty'], axis=1)
+#print dropEmpty
+
+
+dropTm = metadata.drop(['Time'], axis=1)
+#print dropTm
+
+dff = dropEmpty.join(dropTm,how="right", sort=True)
+#print dff
+
+cols = list(dff.columns.values) #Make a list of all of the columns in the df
+
+#print cols
+
+dfo=dff.reindex(['SNM', 'Instrument', 'Scan_date','Time', 'Zone', 'Duration', 'Operator', 'Resolution', 'Zero_filling_Factor', 'Number_points', 'Laser_Wavenumber', 'Wavenumber_one', 'Wavenumber_last', 'Min_absorbance', 'Max_Absorbance'], axis=1)
+#print dfo
+
+
+####################################Drop SNM####################################
+
+
+met=(dfo['SNM']) #pick SNM from Dataframe
+#print(met)
+
+df1 = pd.DataFrame(met.str.split(';',2).tolist(),
+                                   columns = ['SSN','Lab','Material']) #remove semicolon from SNM dataframe
+#print(df1)
+
+dropSNM=dfo.drop(['SNM'], axis=1) #Drop SNM from original dataframe
+
+#print(dropSNM)
+
+jn=df1.join(dropSNM, lsuffix='Instrument', rsuffix='dropSNM') #Join  edited datframe with new columns of snm
+
+#print(jn)
+
+
+# write metadata to a csv file
+#jn.to_csv('D:/New folder/OPUS files metadataIndexed.csv')
+
+# Get absorbances and wavenumbers
+
+wavenumbers = data.x
+
+# Generate some random data
+y = (np.random.random(10) - 0.5).cumsum()
+x = np.arange(y.size)
+
+# Interpolate the data using a cubic spline to "new_length" samples
+icraf_htsxt = [3578, 7497.964, 599.76]
+icraf_kbr = [2542, 3998.12872, 399.387991]
+icraf_znse = [1714, 3996.4810, 499.8151]
+icraf_mpa = [2307, 12493.2, 3598.69]
+CO2_band = [2350.8,2379.8]# this is a range
+
+#new_length = icraf_htsxt[0]
+
+#new_wavenumbers = np.linspace(icraf_htsxt[1], icraf_htsxt[2], new_length)
+
+new_length = icraf_znse[0]
+
+new_wavenumbers = np.linspace(icraf_znse[1], icraf_znse[2], new_length)
+
+
+# Get Absorbance
+# .maxY
+absorb=[]
+repl = None
+for f in file_list:
+    data = opusFC.getOpusData(f,dbs[0])
+    new_data = sp.interpolate.interp1d(wavenumbers, data.y, kind='cubic',fill_value=None, bounds_error=False)(new_wavenumbers)
+    absorb.append(new_data)
+
+new_wavenumbers = np.round(new_wavenumbers,1)
+
+spectra = pd.DataFrame(absorb, columns= new_wavenumbers)
+
+speclib = pd.concat([jn.reset_index(drop=True), spectra], axis=1)
+
+
+# write speclib to a csv file
+speclib.to_csv('Raw_spectra.csv', index= False)
+```
+
+# Visualize raw spectra
+
+```{r, echo = FALSE,warning=FALSE}
+suppressMessages(library(ggplot2))
+suppressMessages(library(reshape))
+suppressMessages(library(prospectr))
+
+
+
+raw <- py$speclib[,-c(2:17)]
+
+wavenumbers <- round(as.numeric(colnames(raw[,-1])),1)
+
+colnames(raw) <- c("SSN", wavenumbers)
+
+spec.m <- melt(raw, id = "SSN")
+
+p <- ggplot(data = spec.m, aes(x = as.numeric(as.vector(variable)),y = value,group = SSN)) +
+  
+  geom_line(size = 0.01, col = "orange", alpha = 0.1) +
+  
+  ggtitle("Raw MIR spectra") +
+  
+  xlim(rev(range(wavenumbers))) +
+
+  
+  ylim(range(spec.m$value)) + 
+  
+ # ylim(c(0,1.3)) +
+  
+  xlab(expression("Wavenumbers (cm)"^-1)) +
+  
+  ylab("Aborbance units") + 
+  #theme with white background
+  theme_bw() +
+  #eliminates background, gridlines, and chart border
+  theme(
+    plot.background = element_blank()
+    ,panel.grid.major = element_blank()
+    ,panel.grid.minor = element_blank()
+  )
+p <- p + theme(plot.title = element_text(hjust = 0.5))
+
+p <- p + theme(legend.position = "none")
+
+p <- p + theme(panel.background = element_rect(fill = "white")) #colour = "grey50"
+
+
+# Preprocess the raw spectra
+
+# Calculate derivatives
+sg <- savitzkyGolay(raw[,-c(1:2)], p = 2, w = 21, m = 1)
+
+SSN <- as.vector(raw[,1])
+
+pcs <- prcomp(sg)
+
+scores <- pcs$x[,1:10]
+
+var <- round(summary(pcs)$importance[2,] * 100, 1)
+
+write.csv(scores, file = "scores.csv", row.names = FALSE)
+
+scores <- read.csv("scores.csv")
+#sp <- sp +  labs(color = "set")
+sp <- ggplot(scores, aes(x = PC3, y =PC2)) +
+
+geom_point(size = 1.5, alpha = 0.35, col = "black") +
+ 
+ggtitle("PCA scores plot") +
+  
+      
+    xlab(paste0("PC3 explains ", var[3], "% total variance")) +
+  
+    ylab(paste0("PC2 explains ", var[2], "% total variance")) +
+
+    theme_bw() +
+
+    theme(
+        plot.background = element_blank()
+        ,panel.grid.major = element_blank()
+        ,panel.grid.minor = element_blank()
+    )
+sp <- sp + theme(plot.title = element_text(hjust = 0.5))
+
+source('~/Dropbox/Scripts/multiplot.R', chdir = TRUE)
+
+multiplot(p,sp, cols= 2)
+
+# Get sample id whose Pc scores are 
+```
+
+## Screening for outliers  
+There are noticeable outliers in the scores plot for points with PC3 scores above 0.1 and others withs PC2 scores below -0.18.    
+
+\pagebreak
+
+Get sample ids for these samples:    
+
+```{r, echo = FALSE, warning=FALSE}
+suppressMessages(library(data.table))
+o <- which(scores[,3]>0.1 | scores[,2] < -0.18)
+out <- py$speclib[o,c(1,5,17)]
+data.table(out)
+```
